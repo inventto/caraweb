@@ -14,22 +14,30 @@ io = require('socket.io').listen(app).on 'connection', (socket) ->
   socket.on 'frame', (data) ->
     return unless typeof(data) is 'string'
     data = data?.split(',')?[1]
-    # Caras
     cv.readImage (new Buffer data, 'base64'), (err, im) ->
       im.detectObject "./node_modules/opencv/data/haarcascade_frontalface_alt2.xml", {}, (err, caras) ->
-        return socket.emit('caras', []) unless caras?.length > 0
-        # Ojos
-        im.detectObject "./node_modules/opencv/data/haarcascade_eye.xml", {}, (err, ojos) ->
-          return socket.emit('caras', []) if err?
-          rects = (caras or []).map (cara) ->
-            cara.ojos = (ojos or []).filter (ojo) ->
-              ojo.x > cara.x and ojo.y > cara.y and (ojo.x + ojo.width) < (cara.x + cara.width) and (ojo.y + ojo.height) < (cara.y + cara.height)
+        return socket.emit('corpos', []) unless caras?.length > 0
+        im.detectObject "./node_modules/opencv/data/haarcascade_eye.xml", {}, (err, olhos) ->
+          return socket.emit('corpos', []) if err?
+          faces = (caras or []).map (cara) ->
+            cara.olhos = (olhos or []).filter (olho) ->
+              olho.x > cara.x and olho.y > cara.y and (olho.x + olho.width) < (cara.x + cara.width) and (olho.y + olho.height) < (cara.y + cara.height)
             cara
-          .filter (cara) -> # Solo caras grandes...
-            # cara.ojos?.length is 2 and cara.width * cara.height > (320 * 240) / 8
-            cara.width * cara.height > (320 * 240) / 12
-          # console.log JSON.stringify rects
-          socket.volatile.emit('caras', rects)
+          # console.log JSON.stringify faces
+	  #im.convertGrayscale()
+          im.detectObject "./node_modules/opencv/data/haarcascade_mcs_upperbody.xml", {}, (err, uppers) ->
+            return socket.emit('corpos', []) unless uppers?.length > 0
+            max_height = 0;
+            rects = (uppers or []).map (corpo) ->
+              corpo.faces = (faces or []).filter (face) ->
+                face.x > corpo.x and face.y > corpo.y and (face.x + face.width) < (corpo.x + corpo.width) and (face.y + face.height) < (corpo.y + corpo.height)
+              if corpo.height > max_height and corpo.faces.length > 0
+                max_height = corpo.height
+              corpo
+            .filter (corpo) ->
+              corpo.height == max_height
+
+            socket.volatile.emit('corpos', rects)
 
 io.disable('sync disconnect on unload')
 io.enable('browser client minification')
@@ -45,8 +53,8 @@ io.set('transports', [
   'jsonp-polling'
 ])
       
-app.listen(9999)
+app.listen(9272)
 
 process.on 'uncaughtException', (err) ->
   console.error(err)
-  socket?.emit('caras', []) 
+  socket?.emit('corpos', []) 
