@@ -1,6 +1,6 @@
     var video = document.querySelector('#live');
-    video.width = 800;
-    video.height = 600;
+    video.width = 640;
+    video.height = 480;
     var canvas = document.querySelector('#canvas');
     var divCaras = document.querySelector('#corposActuales');
     var fps = 3;
@@ -61,10 +61,55 @@
       console.log("Disconnected!!!", data);
     });
 
+
+    function putImageData(ctx, imageData, dx, dy, dirtyX, dirtyY, dirtyWidth, dirtyHeight) {
+      var data = imageData.data;
+      var height = imageData.height;
+      var width = imageData.width;
+      dirtyX = dirtyX || 0;
+      dirtyY = dirtyY || 0;
+      dirtyWidth = dirtyWidth !== undefined? dirtyWidth: width;
+      dirtyHeight = dirtyHeight !== undefined? dirtyHeight: height;
+      var limitBottom = dirtyY + dirtyHeight;
+      var limitRight = dirtyX + dirtyWidth;
+      for (var y = dirtyY; y < limitBottom; y++) {
+        for (var x = dirtyX; x < limitRight; x++) {
+          var pos = y * width + x;
+          ctx.fillStyle = 'rgba(' + data[pos*4+0]
+              + ',' + data[pos*4+1]
+              + ',' + data[pos*4+2]
+              + ',' + (data[pos*4+3]/255) + ')';
+          ctx.fillRect(x + dx, y + dy, 1, 1);
+        }
+      }
+    }
+
+    function equalize() {
+      imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      min = 10000;
+      max = 0;
+      for (i = 0; i < imageData.data.length; i+=4) {
+        aux = 0.299*imageData.data[i]+0.587*imageData.data[i+1]+0.114*imageData.data[i+2];
+        if (aux < min) min = aux;
+        if (aux > max) max = aux;
+      }
+     
+      for (i = 0; i < imageData.data.length; i+=4) {
+        aux = 0.299*imageData.data[i]+0.587*imageData.data[i+1]+0.114*imageData.data[i+2];
+        aux = (aux-min)*255/max;
+        imageData.data[i] = aux;
+        imageData.data[i+1] = aux;
+        imageData.data[i+2] = aux;
+        imageData.data[i+3] = 255;
+      }
+      putImageData(ctx, imageData, 0, 0);
+    }
+
     function captura () {      
       mainTimer = setInterval(function () {
-        ctx.drawImage(video, 0, 0, 320, 240);
-	console.log(corpos);
+        ctx.drawImage(video, 0, 0, 640, 480);
+	equalize();
+
         if (corpos && corpos.length) {
           divCaras.innerHTML = '';
           for (var i in corpos) {
