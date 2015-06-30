@@ -45,7 +45,7 @@
     function grayBlurData(image) {
       gray = new jsfeat.matrix_t(w, h, jsfeat.U8_t | jsfeat.C1_t);
       jsfeat.imgproc.grayscale(image, w, h, gray);
-      jsfeat.imgproc.gaussian_blur(gray, gray, 10);
+      jsfeat.imgproc.gaussian_blur(gray, gray, 7);
       gray = gray.data;
       return gray;
     }
@@ -91,8 +91,11 @@
 	}
         aux = imageGray[i];
 	auxBg = bgGray[i];
-        adjust += (aux - auxBg) / 1000.0;
-        adjustCounter++;
+        d = (aux - auxBg);
+	if (d < threshold * 1.5) {
+          adjust += d / 1000.0;
+          adjustCounter++;
+	}
       }
       if (adjustCounter > 0)
         adjust = -adjust / adjustCounter * 1000;
@@ -102,12 +105,12 @@
     function calcDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max) {
       d = (imageGray[i]-min)*255/max;
       bg = (bgGray[i]-min)*255/max;
-      diff0 = Math.abs(bg * (1 - adjust / 255) - d);
-      diffR = (bgPixels[i*4] * (1 - adjust / 255) - imagePixels[i*4]);
-      diffG = (bgPixels[i*4+1] * (1 - adjust / 255) - imagePixels[i*4+1]);
-      diffB = (bgPixels[i*4+2] * (1 - adjust / 255) - imagePixels[i*4+2]);
+      diff0 = Math.abs(bg - adjust - d);
+      diffR = (bgPixels[i*4] - imagePixels[i*4]);
+      diffG = (bgPixels[i*4+1] - imagePixels[i*4+1]);
+      diffB = (bgPixels[i*4+2] - imagePixels[i*4+2]);
 
-      diff0 = diff0 + Math.abs(diffR + diffG + diffB);
+      diff0 = (diff0 + Math.abs(0.299 * diffR + 0.587 * diffG + 0.114 * diffB - adjust));
       if (diff0 > 255)
         return 255;
       else
@@ -130,26 +133,10 @@
       console.log("Adjust brigth difference: " + adjust);
 
       for (i = 1; i < imageLength; i++) {
-        //difference = true;
-        //if (imageDiff[i] == 0) {
-        difference = calcDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max);
-	//}
-        imageDiff[i] = difference;
-        /*if (diff > threshold) {
-          imageGray[i] = 255;
-          nextLine = i + w;
-	  if (nextLine < imageGray.length) {
-            d1 = calcDiff(imagePixels, imageGray, bgPixels, bgGray, nextLine, min, max, threshold / 2);
-            if (d1) {
-              imageGray[nextLine] = 256;
-            }
-          }
-        } else {
-          imageGray[i] = 0;
-        }*/
+        imageDiff[i] = calcDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max);
       }
 
-      jsfeat.imgproc.gaussian_blur(imageDiff, imageDiff, 10);
+      //jsfeat.imgproc.gaussian_blur(imageDiff, imageDiff, 10);
       return imageDiff;
      
     }
@@ -162,28 +149,16 @@
       imageLength = imageGray.length;
 
       imageDiff = diff(imagePixels, imageGray, bgPixels, bgGray);
-
-      /*
-      for (i = 0; i < imageLength; i+=4) {
-        x = imageDiff[i / 4] / 255.0;
-        imageData.data[i] *= x;
-        imageData.data[i+1] *= x;
-        imageData.data[i+2] *= x;
-      }
-      //*/
-      /*
-//imageGray = tracking.Fast.findCorners(imagePixels, w, h, 1);
-//      imageGray = tracking.Image.grayscale(imageGray, w, h, false);
-//      */
-//*      
+      //*
+      orig = new CV.Image(w,h,imageDiff);
+      dst = new CV.Image();
+      CV.erode(orig, dst);
+      orig = new CV.Image(w,h,dst.data);
+      dst = new CV.Image();
+      CV.dilate(orig, dst);
       for (i = 0; i < imageData.data.length; i+=4) {
-        d = (imageDiff[i / 4] > threshold * 3) ? 255 : 0;
-        x = 255.0 - d;
-        imageData.data[i] += x;
-        imageData.data[i+1] += x;
-        imageData.data[i+2] += x;
+        imageDiff[i / 4] = dst.data[i / 4] > threshold ? 255 : 0;
       }
-      //*/
       /*
       for (i = 0; i < imageData.data.length; i+=4) {
         x = imageDiff[i / 4];
@@ -191,6 +166,25 @@
         imageData.data[i+1] = x;
         imageData.data[i+2] = x;
       }//*/
+
+      //*
+      for (i = 0; i < imageData.data.length; i+=4) {
+        x = imageDiff[i / 4] / 255.0;
+        imageData.data[i] *= x;
+        imageData.data[i+1] *= x;
+        imageData.data[i+2] *= x;
+      }
+      //*/
+      /*
+      for (i = 0; i < imageData.data.length; i+=4) {
+        d = (imageDiff[i / 4] > threshold) ? 255 : 0;
+        x = 255.0 - d;
+        imageData.data[i] += x;
+        imageData.data[i+1] += x;
+        imageData.data[i+2] += x;
+      }
+      //*/
+
       ctx.putImageData(imageData, 0, 0);
     }
 
