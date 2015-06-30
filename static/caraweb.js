@@ -45,7 +45,7 @@
     function grayBlurData(image) {
       gray = new jsfeat.matrix_t(w, h, jsfeat.U8_t | jsfeat.C1_t);
       jsfeat.imgproc.grayscale(image, w, h, gray);
-      //jsfeat.imgproc.gaussian_blur(gray, gray, 10);
+      jsfeat.imgproc.gaussian_blur(gray, gray, 10);
       gray = gray.data;
       return gray;
     }
@@ -86,36 +86,37 @@
       adjust = 0;
       adjustCounter = 0;
       for (i = 0; i < imageLength; i++) {
+	if ((i / w > 40) || (i % w > 40)) {
+	  continue;
+	}
         aux = imageGray[i];
 	auxBg = bgGray[i];
-	if ((aux > 180 || auxBg > 180) && Math.abs(aux - auxBg) < threshold / 2) {
-		adjust += (aux - auxBg) / 1000.0;
-		adjustCounter++;
-	}
+        adjust += (aux - auxBg) / 1000.0;
+        adjustCounter++;
       }
       if (adjustCounter > 0)
         adjust = -adjust / adjustCounter * 1000;
       return adjust;
     }
 
-    function verifyDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max, threshold) {
+    function calcDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max) {
       d = (imageGray[i]-min)*255/max;
       bg = (bgGray[i]-min)*255/max;
-      diff = Math.abs(bg - d - adjust) > threshold;
-      diffR = Math.abs(bgPixels[i*4] - imagePixels[i*4]) > threshold * 2;
-      diffG = Math.abs(bgPixels[i*4+1] - imagePixels[i*4+1]) > threshold * 2;
-      diffB = Math.abs(bgPixels[i*4+2] - imagePixels[i*4+2]) > threshold * 2;
+      diff0 = Math.abs(bg * (1 - adjust / 255) - d);
+      diffR = (bgPixels[i*4] * (1 - adjust / 255) - imagePixels[i*4]);
+      diffG = (bgPixels[i*4+1] * (1 - adjust / 255) - imagePixels[i*4+1]);
+      diffB = (bgPixels[i*4+2] * (1 - adjust / 255) - imagePixels[i*4+2]);
 
-      return diff || diffR || diffG || diffB;
+      diff0 = diff0 + Math.abs(diffR + diffG + diffB);
+      if (diff0 > 255)
+        return 255;
+      else
+        return diff0;
     }
-    function equalize() {
-      if (!bgGray) return;
-      imageData = ctx.getImageData(0, 0, w, h);
+    function diff(imagePixels, imageGray, bgPixels, bgGray) {
+      imageDiff = new jsfeat.matrix_t(w, h, jsfeat.U8_t | jsfeat.C1_t);
 
-      imagePixels = imageData.data;
-      imageGray = grayBlurData(imagePixels);
       imageLength = imageGray.length;
-
       min = 10000;
       max = 0;
 
@@ -129,71 +130,63 @@
       console.log("Adjust brigth difference: " + adjust);
 
       for (i = 1; i < imageLength; i++) {
-        diff = true;
-        if (imageGray[i] < 256) {
-          diff = verifyDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max, threshold);
-	}
-        if (diff) {
+        //difference = true;
+        //if (imageDiff[i] == 0) {
+        difference = calcDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max);
+	//}
+        imageDiff[i] = difference;
+        /*if (diff > threshold) {
           imageGray[i] = 255;
           nextLine = i + w;
 	  if (nextLine < imageGray.length) {
-            d1 = verifyDiff(imagePixels, imageGray, bgPixels, bgGray, nextLine, min, max, threshold / 2);
+            d1 = calcDiff(imagePixels, imageGray, bgPixels, bgGray, nextLine, min, max, threshold / 2);
             if (d1) {
               imageGray[nextLine] = 256;
             }
           }
         } else {
           imageGray[i] = 0;
-        }
+        }*/
       }
-      for (i = 0; i < imageLength; i++) {
-        if (i > 2 && i < imageLength - 2 && 
-           (imageGray[i] == 255 && imageGray[i - 1] == 0 && (imageGray[i + 1] == 0 || imageGray[i + 2] == 0)) || 
-           (imageGray[i] == 255 && imageGray[i - 2] == 0 && (imageGray[i + 1] == 0 || imageGray[i + 2] == 0)) 
-        ) {
-          imageGray[i] = 0;
-        } else
-        if (i > w * 2 && i < imageLength - w * 2 && imageGray[i] == 255 && 
-           (imageGray[i - w] == 0 && (imageGray[i + w] == 0 || imageGray[i + w * 2] == 0)) ||
-           (imageGray[i - w * 2] == 0 && (imageGray[i + w] == 0 || imageGray[i + w * 2] == 0))
-        ) {
-            imageGray[i] = 0;
-        }
-        if (i > 2 && i < imageLength - 2 && 
-           (imageGray[i] == 0 && imageGray[i - 1] == 255 && (imageGray[i + 1] == 255 || imageGray[i + 2] == 255)) || 
-           (imageGray[i] == 0 && imageGray[i - 2] == 255 && (imageGray[i + 1] == 255 || imageGray[i + 2] == 255)) 
-        ) {
-            imageGray[i] = 255;
-        } else
-        if (i > w * 2 && i < imageLength - w * 2 && imageGray[i] == 0 && 
-           (imageGray[i - w] == 255 && (imageGray[i + w] == 255 || imageGray[i + w * 2] == 255)) ||
-           (imageGray[i - w * 2] == 255 && (imageGray[i + w] == 255 || imageGray[i + w * 2] == 255))
-        ) {
-         imageGray[i] = 255;
-        }
 
-      }
+      jsfeat.imgproc.gaussian_blur(imageDiff, imageDiff, 10);
+      return imageDiff;
+     
+    }
+    function equalize() {
+      if (!bgGray) return;
+      imageData = ctx.getImageData(0, 0, w, h);
+
+      imagePixels = imageData.data;
+      imageGray = grayBlurData(imagePixels);
+      imageLength = imageGray.length;
+
+      imageDiff = diff(imagePixels, imageGray, bgPixels, bgGray);
+
       /*
       for (i = 0; i < imageLength; i+=4) {
-        x = imageGray[i / 4] / 255.0;
+        x = imageDiff[i / 4] / 255.0;
         imageData.data[i] *= x;
         imageData.data[i+1] *= x;
         imageData.data[i+2] *= x;
       }
       //*/
-      //*
+      /*
 //imageGray = tracking.Fast.findCorners(imagePixels, w, h, 1);
 //      imageGray = tracking.Image.grayscale(imageGray, w, h, false);
+//      */
+//*      
       for (i = 0; i < imageData.data.length; i+=4) {
-        x = 255.0 - imageGray[i / 4];
+        d = (imageDiff[i / 4] > threshold * 3) ? 255 : 0;
+        x = 255.0 - d;
         imageData.data[i] += x;
         imageData.data[i+1] += x;
         imageData.data[i+2] += x;
       }
       //*/
-      //*
+      /*
       for (i = 0; i < imageData.data.length; i+=4) {
-        x = imageGray[i / 4];
+        x = imageDiff[i / 4];
         imageData.data[i] = x;
         imageData.data[i+1] = x;
         imageData.data[i+2] = x;
