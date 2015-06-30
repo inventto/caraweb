@@ -1,6 +1,8 @@
     var video = document.querySelector('#live');
-    video.width = 640;
-    video.height = 480;
+    w = 320;
+    h = 240;
+    video.width = w;
+    video.height = h;
     var canvas = document.querySelector('#canvas');
     var divCaras = document.querySelector('#corposActuales');
     var fps = 1;
@@ -40,12 +42,19 @@
       }
     }
 
+    function grayBlurData(image) {
+      gray = new jsfeat.matrix_t(w, h, jsfeat.U8_t | jsfeat.C1_t);
+      jsfeat.imgproc.grayscale(image, w, h, gray);
+      //jsfeat.imgproc.gaussian_blur(gray, gray, 10);
+      gray = gray.data;
+      return gray;
+    }
+
     bgBtn.onclick = function (e) {
-      ctx.drawImage(video, 0, 0, 640, 480);
-      bg = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      ctx.drawImage(video, 0, 0, w, h);
+      bg = ctx.getImageData(0, 0, w, h).data;
       bgPixels = bg;
-      bgBlur = tracking.Image.blur(bg, canvas.width, canvas.height, 10);
-      bgGray = tracking.Image.grayscale(bgBlur, canvas.width, canvas.height, false);
+      bgGray = grayBlurData(bg);
     }
 
     var socket = io.connect(top.location.origin); // 'http://localhost');
@@ -76,33 +85,40 @@
     function calcAdjust(imageLength, imageGray) {
       adjust = 0;
       adjustCounter = 0;
-      //*
       for (i = 0; i < imageLength; i++) {
         aux = imageGray[i];
 	auxBg = bgGray[i];
-	if (aux > 200 && Math.abs(aux - auxBg) < threshold) {
+	if ((aux > 180 || auxBg > 180) && Math.abs(aux - auxBg) < threshold / 2) {
 		adjust += (aux - auxBg) / 1000.0;
 		adjustCounter++;
 	}
       }
-      adjust = -adjust / adjustCounter * 2000;
+      if (adjustCounter > 0)
+        adjust = -adjust / adjustCounter * 1000;
       return adjust;
+    }
+
+    function verifyDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max, threshold) {
+      d = (imageGray[i]-min)*255/max;
+      bg = (bgGray[i]-min)*255/max;
+      diff = Math.abs(bg - d - adjust) > threshold;
+      diffR = Math.abs(bgPixels[i*4] - imagePixels[i*4]) > threshold * 2;
+      diffG = Math.abs(bgPixels[i*4+1] - imagePixels[i*4+1]) > threshold * 2;
+      diffB = Math.abs(bgPixels[i*4+2] - imagePixels[i*4+2]) > threshold * 2;
+
+      return diff || diffR || diffG || diffB;
     }
     function equalize() {
       if (!bgGray) return;
-      imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      w = imageData.width;
-      h = imageData.height;
+      imageData = ctx.getImageData(0, 0, w, h);
 
       imagePixels = imageData.data;
-      imageBlur = tracking.Image.blur(imagePixels, w, h, 10);
-      imageGray = tracking.Image.grayscale(imageBlur, w, h, false); // data
+      imageGray = grayBlurData(imagePixels);
       imageLength = imageGray.length;
 
       min = 10000;
       max = 0;
-      pos = 20;
-      wPos = w * pos;
+
       for (i = 0; i < imageLength; i++) {
         aux = imageGray[i];
         if (aux < min) min = aux;
@@ -110,22 +126,26 @@
       }
 
       adjust = calcAdjust(imageLength, imageGray);
-      console.log("Adjust brigth defference: " + adjust);
-      //*/
+      console.log("Adjust brigth difference: " + adjust);
 
       for (i = 1; i < imageLength; i++) {
-        d = (imageGray[i]-min)*255/max;
-        //imageGray[i] = d;
-
-        bg = (bgGray[i]-min)*255/max;
-        diff = Math.abs(bg - d - adjust) > threshold;
-        diffR = Math.abs(bgPixels[i*4] - imagePixels[i*4]) > threshold * 2.5;
-        diffG = Math.abs(bgPixels[i*4+1] - imagePixels[i*4+1]) > threshold * 2.5;
-        diffB = Math.abs(bgPixels[i*4+2] - imagePixels[i*4+2]) > threshold * 2.5;
-        imageGray[i] = (diff || (diffR || diffG || diffB)) ? 255 : 0;
-
+        diff = true;
+        if (imageGray[i] < 256) {
+          diff = verifyDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max, threshold);
+	}
+        if (diff) {
+          imageGray[i] = 255;
+          nextLine = i + w;
+	  if (nextLine < imageGray.length) {
+            d1 = verifyDiff(imagePixels, imageGray, bgPixels, bgGray, nextLine, min, max, threshold / 2);
+            if (d1) {
+              imageGray[nextLine] = 256;
+            }
+          }
+        } else {
+          imageGray[i] = 0;
+        }
       }
-      //*
       for (i = 0; i < imageLength; i++) {
         if (i > 2 && i < imageLength - 2 && 
            (imageGray[i] == 255 && imageGray[i - 1] == 0 && (imageGray[i + 1] == 0 || imageGray[i + 2] == 0)) || 
@@ -162,6 +182,8 @@
       }
       //*/
       //*
+//imageGray = tracking.Fast.findCorners(imagePixels, w, h, 1);
+//      imageGray = tracking.Image.grayscale(imageGray, w, h, false);
       for (i = 0; i < imageData.data.length; i+=4) {
         x = 255.0 - imageGray[i / 4];
         imageData.data[i] += x;
@@ -169,8 +191,8 @@
         imageData.data[i+2] += x;
       }
       //*/
-      /*
-      for (i = 0; i < imageLength; i+=4) {
+      //*
+      for (i = 0; i < imageData.data.length; i+=4) {
         x = imageGray[i / 4];
         imageData.data[i] = x;
         imageData.data[i+1] = x;
@@ -181,7 +203,7 @@
 
     function captura () {      
       mainTimer = setInterval(function () {
-        ctx.drawImage(video, 0, 0, 640, 480);
+        ctx.drawImage(video, 0, 0, w, h);
 	equalize();
 
         if (corpos && corpos.length) {
