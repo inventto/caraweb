@@ -13,8 +13,24 @@
     var ultimoCorpo = undefined;
     var bgPixels = undefined;
     var bgGray = undefined;
-    var threshold = 30;
-    var adjust = 0;
+
+    var diffMode = 4;
+
+    var applyThreshold = true;
+    var threshold = 100;
+
+    var applyFlood = true;
+    var floodLimit = 30;
+    var colorThreshold = 10;
+
+    var adjustMultiplier = 2;
+    var adjustThreshold = 60;
+
+    var erodes = 0;
+    
+    var blurSize = 0;
+
+    var viewMode = 1;
 
     var debug = document.querySelector('#debug');
     var debugBtn = document.querySelector('#debugBtn');
@@ -45,7 +61,7 @@
     function grayBlurData(image) {
       gray = new jsfeat.matrix_t(w, h, jsfeat.U8_t | jsfeat.C1_t);
       jsfeat.imgproc.grayscale(image, w, h, gray);
-      jsfeat.imgproc.gaussian_blur(gray, gray, 7);
+      jsfeat.imgproc.gaussian_blur(gray, gray, blurSize);
       gray = gray.data;
       return gray;
     }
@@ -83,64 +99,212 @@
       console.log("Disconnected!!!", data);
     });
     function calcAdjust(imageLength, imageGray) {
-      adjust = 0;
-      adjustCounter = 0;
+      var adjust = 0;
+      var adjustCounter = 0;
       for (i = 0; i < imageLength; i++) {
-	if ((i / w > 40) || (i % w > 40)) {
-	  continue;
-	}
-        aux = imageGray[i];
-	auxBg = bgGray[i];
-        d = (aux - auxBg);
-	if (d < threshold * 1.5) {
-          adjust += d / 1000.0;
-          adjustCounter++;
+        var x = i % w;
+        var y = i / w;
+	var p = h / 6;
+        if ((y <= p) && (x <= p || x >= w - p)) {
+          var aux = imageGray[i];
+          var auxBg = bgGray[i];
+          var d = (aux - auxBg);
+          if (d < adjustThreshold) {
+            adjust += d / 1000.0;
+            adjustCounter++;
+          }
 	}
       }
       if (adjustCounter > 0)
         adjust = -adjust / adjustCounter * 1000;
-      return adjust;
+      return adjust * adjustMultiplier;
     }
+    function calcDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max, adjust) {
+      var d = (imageGray[i]-min)*255/max;
+      var bg = (bgGray[i]-min)*255/max;
+      var diff0 = Math.abs(bg - adjust - d);
+      var diffR = (bgPixels[i*4] - imagePixels[i*4]);
+      var diffG = (bgPixels[i*4+1] - imagePixels[i*4+1]);
+      var diffB = (bgPixels[i*4+2] - imagePixels[i*4+2]);
 
-    function calcDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max) {
-      d = (imageGray[i]-min)*255/max;
-      bg = (bgGray[i]-min)*255/max;
-      diff0 = Math.abs(bg - adjust - d);
-      diffR = (bgPixels[i*4] - imagePixels[i*4]);
-      diffG = (bgPixels[i*4+1] - imagePixels[i*4+1]);
-      diffB = (bgPixels[i*4+2] - imagePixels[i*4+2]);
-
-      diff0 = (diff0 + Math.abs(0.299 * diffR + 0.587 * diffG + 0.114 * diffB - adjust));
+      if (diffMode == 1) {
+        diff0 = (diff0 + Math.abs(0.299 * diffR + 0.587 * diffG + 0.114 * diffB - adjust / 3)) / 2;
+      } else if (diffMode == 2) {
+        diff0 = Math.abs(0.299 * diffR + 0.587 * diffG + 0.114 * diffB - adjust);
+      } else if (diffMode == 3) {
+        diff0 = (diff0 + Math.abs(0.299 * diffR + 0.587 * diffG + 0.114 * diffB - adjust / 3) * 2) / 2.2;
+      } else if (diffMode == 4) {
+        diff0 = (2 * diff0 + Math.abs(0.299 * diffR + 0.587 * diffG + 0.114 * diffB - adjust / 3)) / 2.5;
+      } else if (diffMode == 5) {
+        diff0 = Math.abs(bg - d + adjust);
+      }
       if (diff0 > 255)
         return 255;
+      else if (diff0 < 0)
+        return 0;
       else
         return diff0;
     }
-    function diff(imagePixels, imageGray, bgPixels, bgGray) {
-      imageDiff = new jsfeat.matrix_t(w, h, jsfeat.U8_t | jsfeat.C1_t);
+    function diff(imagePixels, imageGray, bgPixels, bgGray, applyThreshold) {
+      var imageDiff = new jsfeat.matrix_t(w, h, jsfeat.U8_t | jsfeat.C1_t);
 
-      imageLength = imageGray.length;
-      min = 10000;
-      max = 0;
+      var imageLength = imageGray.length;
+      var min = 10000;
+      var max = 0;
 
       for (i = 0; i < imageLength; i++) {
-        aux = imageGray[i];
+        var aux = imageGray[i];
         if (aux < min) min = aux;
 	else if (aux > max) max = aux;
       }
 
-      adjust = calcAdjust(imageLength, imageGray);
+      var adjust = calcAdjust(imageLength, imageGray);
       console.log("Adjust brigth difference: " + adjust);
 
-      for (i = 1; i < imageLength; i++) {
-        imageDiff[i] = calcDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max);
+      if (applyThreshold) {
+        for (i = 1; i < imageLength; i++) {
+          imageDiff[i] = calcDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max, adjust);
+	  imageDiff[i] = imageDiff[i] > threshold ? 255 : 0;
+	}
+      } else {
+        for (i = 1; i < imageLength; i++) {
+          imageDiff[i] = calcDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max, adjust);
+	}
       }
 
-      //jsfeat.imgproc.gaussian_blur(imageDiff, imageDiff, 10);
       return imageDiff;
-     
     }
-    function equalize() {
+
+    var Color = function(cR, cG, cB) {
+      this.red = cR;
+      this.green = cG;
+      this.blue = cB;
+      this.equals = function(color) {
+        var dR = Math.abs(this.red - color.red);
+        var dG = Math.abs(this.green - color.green);
+        var dB = Math.abs(this.blue - color.blue);
+        return dR < colorThreshold / 2 && dG < colorThreshold && dB < colorThreshold / 1.5;
+      }
+      this.to_s = function() {
+	      return this.red + "," + this.green + "," + this.blue;
+      }
+    }
+    function getColor(image, x, y) {
+      var i = (y * w + x) * 4;
+      var cR = image.data[i];
+      var cG = image.data[i+1];
+      var cB = image.data[i+2];
+      return new Color (cR, cG, cB);
+    }
+    function floodFill(image, mask, x, y, newC) {
+      var mainC = getColor(image, x, y);
+      var i = (y * w + x);
+      mask[i] = newC;
+      floodFill4(image, mask, x + 1, y, mainC, newC, 0);
+      floodFill4(image, mask, x - 1, y, mainC, newC, 0);
+      floodFill4(image, mask, x, y + 1, mainC, newC, 0);
+      floodFill4(image, mask, x, y - 1, mainC, newC, 0);
+    }
+    function flood(imageData, mask) {
+      if (applyFlood && applyThreshold) {
+        for (x = 0; x < w; x++) {
+          for (y = 0; y < h; y++) {
+            var i = y * w + x;
+            if (mask[i] == 255) {
+              floodFill(imageData, mask, x, y, 255);
+            }
+          }
+        }
+      }
+    }
+    function floodFill4 (image, mask, x, y, mainC, newC, count) {
+      if (x > w || y > h || y < 0 || x < 0 || !applyFlood || count > floodLimit)
+        return;
+
+      var i = (y * w + x);
+      var maskColor = mask[i];
+      var diffC = Math.abs(maskColor - newC);
+      if (maskColor != 255 && maskColor != newC) {
+        var color = getColor(image, x, y);
+        if(color.equals(mainC)) {
+		if (diffC == 0) {
+			mask[i] = 255;
+		} else {
+			mask[i] = newC;
+		}
+          //mask[i] = newC;
+          if (count < floodLimit) {
+            floodFill4(image, mask, x + 1, y, color, newC, count + 1);
+            floodFill4(image, mask, x - 1, y, color, newC, count + 1);
+            floodFill4(image, mask, x, y + 1, color, newC, count + 1);
+            floodFill4(image, mask, x, y - 1, color, newC, count + 1);
+          }
+        }
+      }
+    }
+    function doThreshold(image, threshold) {
+      for (i = 0; i < image.length; i++) {
+        image[i] = (image[i] > threshold) ? 255 : 0;
+      }
+    }
+    function applyViewMode(imageData, map, mode) {
+      if (mode == 1) {
+        for (i = 0; i < imageData.data.length; i+=4) {
+          x = map[i / 4];
+          imageData.data[i] = x;
+          imageData.data[i+1] = x;
+          imageData.data[i+2] = x;
+        }
+      } else if (mode == 2) {
+        for (i = 0; i < imageData.data.length; i+=4) {
+          x = map[i / 4] / 255.0;
+	  if (x < 0) x = 0;
+	  if (x > 255) x = 255;
+          imageData.data[i] *= x;
+          imageData.data[i+1] *= x;
+          imageData.data[i+2] *= x;
+        }
+      } else if (mode == 3) {
+        for (i = 0; i < imageData.data.length; i+=4) {
+          x = 255.0 - map[i / 4];
+	  if (x < 0) x = 0;
+	  if (x > 255) x = 255;
+          imageData.data[i] += x;
+          imageData.data[i+1] += x;
+          imageData.data[i+2] += x;
+        }
+      } else if (mode == 4) {
+        for (i = 0; i < imageData.data.length; i+=4) {
+          x = 255.0 - map[i / 4];
+	  if (x < 0) x = 0;
+	  if (x > 255) x = 255;
+	  if (x > 0) {
+            imageData.data[i] = bgPixels[i];
+            imageData.data[i+1] = bgPixels[i+1];
+            imageData.data[i+2] = bgPixels[i+2];
+	  } else {
+            imageData.data[i] += x;
+            imageData.data[i+1] += x;
+            imageData.data[i+2] += x;
+	  }
+        }
+      }
+    }
+    function erode(mask, n) {
+      var orig = new CV.Image(w,h,mask);
+      var dst = orig;
+      for (i = 0; i < n; i++) {
+        dst = new CV.Image();
+        CV.erode(orig, dst);
+        orig = new CV.Image(w,h,dst.data);
+      }
+      for (i = 0; i < mask.length; i++) {
+        mask[i] = dst[i];
+      }
+    }
+
+    function proccess() {
+      ctx.drawImage(video, 0, 0, w, h);
       if (!bgGray) return;
       imageData = ctx.getImageData(0, 0, w, h);
 
@@ -148,50 +312,18 @@
       imageGray = grayBlurData(imagePixels);
       imageLength = imageGray.length;
 
-      imageDiff = diff(imagePixels, imageGray, bgPixels, bgGray);
-      //*
-      orig = new CV.Image(w,h,imageDiff);
-      dst = new CV.Image();
-      CV.erode(orig, dst);
-      orig = new CV.Image(w,h,dst.data);
-      dst = new CV.Image();
-      CV.dilate(orig, dst);
-      for (i = 0; i < imageData.data.length; i+=4) {
-        imageDiff[i / 4] = dst.data[i / 4] > threshold ? 255 : 0;
-      }
-      /*
-      for (i = 0; i < imageData.data.length; i+=4) {
-        x = imageDiff[i / 4];
-        imageData.data[i] = x;
-        imageData.data[i+1] = x;
-        imageData.data[i+2] = x;
-      }//*/
-
-      //*
-      for (i = 0; i < imageData.data.length; i+=4) {
-        x = imageDiff[i / 4] / 255.0;
-        imageData.data[i] *= x;
-        imageData.data[i+1] *= x;
-        imageData.data[i+2] *= x;
-      }
-      //*/
-      /*
-      for (i = 0; i < imageData.data.length; i+=4) {
-        d = (imageDiff[i / 4] > threshold) ? 255 : 0;
-        x = 255.0 - d;
-        imageData.data[i] += x;
-        imageData.data[i+1] += x;
-        imageData.data[i+2] += x;
-      }
-      //*/
-
+      imageDiff = diff(imagePixels, imageGray, bgPixels, bgGray, applyThreshold);
+      erode(imageDiff, erodes);
+      
+      flood(imageData, imageDiff);
+      applyViewMode(imageData, imageDiff, viewMode);
+      
       ctx.putImageData(imageData, 0, 0);
     }
 
     function captura () {      
       mainTimer = setInterval(function () {
-        ctx.drawImage(video, 0, 0, w, h);
-	equalize();
+	proccess();
 
         if (corpos && corpos.length) {
           divCaras.innerHTML = '';
