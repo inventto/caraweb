@@ -23,18 +23,43 @@
     var floodLimit = 30;
     var colorThreshold = 10;
 
+    var secondFlood = true;
+
     var adjustMultiplier = 2;
     var adjustThreshold = 60;
 
-    var erodes = 0;
+    var dilates0 = 1;
+    var erodes = 1;
+    var dilates = 1;
+    var dilates2 = 2;
+    var erodes2 = 2;
+    var dilates3 = 2;
+    var erodes3 = 2;
     
     var blurSize = 0;
 
     var viewMode = 1;
 
+    var fixImageData = false;
+    var imageBkp = undefined;
+
     var debug = document.querySelector('#debug');
     var debugBtn = document.querySelector('#debugBtn');
     var bgBtn = document.querySelector('#bgBtn');
+
+    viewMode=3;
+    threshold=50;//50
+    colorThreshold=3;//10
+    diffMode = 3;//3
+    dilates0 = 5;//4
+    erodes = dilates0+1;
+    dilates = erodes - dilates0+dilates0;
+    erodes2 = 0;//10;
+    secondFlood = false;
+    dilates2 = erodes2;//dilates + 1;//10;
+    dilates3 = 1;//dilates + 1;//10;
+    erodes3 = 1+dilates0;//10;
+    fixImageData = false;
 
     navigator.getMedia = (navigator.getUserMedia ||
                            navigator.webkitGetUserMedia ||
@@ -119,6 +144,19 @@
         adjust = -adjust / adjustCounter * 1000;
       return adjust * adjustMultiplier;
     }
+    function RGBtoHue(r, g, b) {
+      var min = Math.min( r, g, b );
+      var max = Math.max( r, g, b );
+      var delta = max - min;
+      var c = 0;
+      if( r == max )
+        c = Math.abs( g - b );		// between yellow & magenta
+      else if( g == max )
+        c = Math.abs( b - r );	// between cyan & yellow
+      else
+        c = Math.abs( r - g );	// between magenta & cyan
+      return c * 20;
+    }
     function calcDiff(imagePixels, imageGray, bgPixels, bgGray, i, min, max, adjust) {
       var d = (imageGray[i]-min)*255/max;
       var bg = (bgGray[i]-min)*255/max;
@@ -137,6 +175,14 @@
         diff0 = (2 * diff0 + Math.abs(0.299 * diffR + 0.587 * diffG + 0.114 * diffB - adjust / 3)) / 2.5;
       } else if (diffMode == 5) {
         diff0 = Math.abs(bg - d + adjust);
+      } else if (diffMode == 6) {
+        fg = RGBtoHue(imagePixels[i*4], imagePixels[i*4+1], imagePixels[i*4+2]);
+	bg = RGBtoHue(bgPixels[i*4], bgPixels[i*4+1], bgPixels[i*4+2]);
+        diff0 = Math.abs(Math.min(fg-bg, fg-bg+255));
+      } else if (diffMode == 7) {
+        fg = RGBtoHue(imagePixels[i*4], imagePixels[i*4+1], imagePixels[i*4+2]);
+	bg = RGBtoHue(bgPixels[i*4], bgPixels[i*4+1], bgPixels[i*4+2]);
+        diff0 += Math.abs(Math.min(fg-bg, fg-bg+255));
       }
       if (diff0 > 255)
         return 255;
@@ -290,32 +336,87 @@
         }
       }
     }
-    function erode(mask, n) {
-      var orig = new CV.Image(w,h,mask);
-      var dst = orig;
+    function applyFunctionPair(mask, n, fn) {
+      var length = w * h;
       for (i = 0; i < n; i++) {
-        dst = new CV.Image();
-        CV.erode(orig, dst);
-        orig = new CV.Image(w,h,dst.data);
+        var newMask = new jsfeat.matrix_t(w, h, jsfeat.U8_t | jsfeat.C1_t);
+        for (y = 0; y < h; y++) {
+          for (x = 0; x < w; x++) {
+            var pos = y * w + x;
+	    newMask[pos] = mask[pos];
+	  }
+        }
+        for (y = 0; y < h; y++) {
+          for (x = 0; x < w; x++) {
+            var pos = y * w + x;
+            var left = pos - 1;
+            var right = pos + 1;
+            var top_ = pos - w;
+            var bottom = pos + w;
+	    if (left >= 0 && right < length) {
+              newMask[pos] = fn(mask[pos], mask[left], mask[right]);
+	    }
+	    if (top_ >= 0 && bottom < length) {
+              newMask[pos] = fn(newMask[pos], mask[top_], mask[bottom]);
+	    }
+	    if (top_ - 1 >= 0) {
+              newMask[pos] = fn(newMask[pos], mask[top_ + 1], mask[top_ - 1]);
+	    }
+	    if (bottom + 1 < length) {
+              newMask[pos] = fn(newMask[pos], mask[bottom + 1], mask[bottom - 1]);
+	    }
+	    /*if (top_ - 2 >= 0 && top_ - 2 < length) {
+              newMask[pos] = fn(newMask[pos], mask[top_ + 2], mask[top_ - 2]);
+	    }
+	    if (bottom + 2 < length && bottom + 2 >= 0) {
+              newMask[pos] = fn(newMask[pos], mask[bottom + 2], mask[bottom - 2]);
+	    }*/
+
+          }
+        }
+	mask = newMask;
       }
-      for (i = 0; i < mask.length; i++) {
-        mask[i] = dst[i];
-      }
+      return mask;
     }
 
     function proccess() {
       ctx.drawImage(video, 0, 0, w, h);
       if (!bgGray) return;
+
       imageData = ctx.getImageData(0, 0, w, h);
+      if (fixImageData && imageBkp) {
+	for (i = 0; i < imageData.data.length; i++) {
+          imageData.data[i] = imageBkp[i];
+	}
+      } else {
+        imageBkp = new jsfeat.matrix_t(w, h, jsfeat.U8_t | jsfeat.C4_t);
+	for (i = 0; i < imageData.data.length; i++) {
+          imageBkp[i] = imageData.data[i];
+	}
+      }
 
       imagePixels = imageData.data;
       imageGray = grayBlurData(imagePixels);
       imageLength = imageGray.length;
 
       imageDiff = diff(imagePixels, imageGray, bgPixels, bgGray, applyThreshold);
-      erode(imageDiff, erodes);
+      imageDiff = applyFunctionPair(imageDiff, dilates0, Math.max);
+      imageDiff = applyFunctionPair(imageDiff, erodes, Math.min);
+      imageDiff = applyFunctionPair(imageDiff, dilates, Math.max);
       
       flood(imageData, imageDiff);
+
+
+      imageDiff = applyFunctionPair(imageDiff, erodes2, Math.min);
+      if (secondFlood)
+        flood(imageData, imageDiff);
+      imageDiff = applyFunctionPair(imageDiff, dilates2, Math.max);
+
+
+      imageDiff = applyFunctionPair(imageDiff, dilates3, Math.max);
+      imageDiff = applyFunctionPair(imageDiff, erodes3, Math.min);
+
+
       applyViewMode(imageData, imageDiff, viewMode);
       
       ctx.putImageData(imageData, 0, 0);
